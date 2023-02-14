@@ -1,0 +1,226 @@
+---
+title: "Extra Credit"
+author: "Kayleah Griffen"
+date: "2/13/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The objective of this extra credit assignment was to find a dataset that includes a time series for two or more separate items. Then use window functions to calculate the year-to-date average and the six-day moving averages for each item.
+
+The dataset I chose is Surface underway measurements of partial pressure of carbon dioxide (pCO2), sea surface temperature, sea surface salinity and barometric pressure during the R/V Sikuliaq Expeditions in the North Pacific Ocean, Gulf of Alaska, Bering Sea, Chukchi Sea, Beaufort Sea and Arctic Ocean in 2021. I chose this data because I was aboard the R/V Sikuliaq in October of 2021. I chose to focus on the sea surface temperature (SST) and the sea surface salinity (SSS). In ocean acoustics, the temperature, salinity, and depth all affect how fast and far sound can propagate. The temperature and salinity vary over locations and depths, and the instruments we deployed were mostly at around 100m of depth, but I still thought those two variables would be most interesting to look at.
+
+## Processing
+
+First, load the required packages.
+
+```{r warning=FALSE, message=FALSE}
+library(tidyverse)
+library(ggplot2)
+```
+
+Next, read in the data and take a look at it.
+
+```{r}
+# df <- read.csv("C:/Users/kgriffen/OneDrive - Globalfoundries/Documents/Data_science/33BI20211008.csv", skip=3)
+df <- read.csv("https://raw.githubusercontent.com/klgriffen96/spring23_data607_EC1/main/33BI20211008.csv", skip=3)
+str(df)
+```
+Make a new data frame that has the date, the SST and SSS.
+
+```{r}
+# Data Frame with just Y,M,D, SST and SSS
+df <- df %>% group_by(YEAR, MONTH, DAY) %>% 
+  summarise(mean_sst = mean(SST..DEG_C.),
+            mean_sss=mean(SSS))
+
+# Add an actual date column to the data frame
+df$date <- as.Date(with(df, paste(YEAR, MONTH, DAY,sep="-")), "%Y-%m-%d")
+```
+Create a function to compute the moving average of data for a variable time period. I have created a function that starts with the first data point and calculates the to-date average for the time period specified. For the points less than the time period specified, it calculates the average with the data points up until that point. Then once the time period is reached it begins the rolling average. This can be used for the year-to-date average (time period = 365 days) starting at the first date or the six day average, (time period = 6 days).
+
+```{r}
+
+moving_average <- function(x, n) {
+  y <- c()
+  for (i in 1:length(x)){
+    if (i <= n){
+      temp <- sum(x[1:i])/i
+      y[i] <- temp
+    } else {
+      temp <- sum(x[(i-n+1):i])
+      temp <- temp/n
+      y[i] <- temp
+    }
+  }
+  return(y)
+}
+
+# Try out basics with test data
+my_data <- c(1 ,2 ,5 ,7 ,15, 12, 7, 14, 9, 10 ) # Test vector 
+my_time_period <- 6  # Test time period
+
+moving_average(my_data, my_time_period)
+
+```
+
+Now, try to use window functions to accomplish the same thing. 
+
+```{r}
+moving_average_window <- function(x, n) {
+  y <- ifelse(seq(x) <= n, 
+              cumsum(x)/seq(x), 
+              (cumsum(x) - cumsum(ifelse(is.na(lag(x, n)), 0, lag(x, n))))/n)
+  return(y)
+}
+
+```
+
+Check answers with previous function.
+
+```{r}
+all.equal(moving_average_window(my_data, my_time_period),
+          moving_average(my_data, my_time_period))
+
+```
+The code appears to work on the test data set. Now use the SSS and SST data.
+
+Compute the year to date average of the SST and the SSS and check them.
+
+```{r}
+n <- 365
+all.equal(moving_average_window(df$mean_sst, n), 
+  moving_average(df$mean_sst, n))
+all.equal(moving_average_window(df$mean_sss, n), 
+  moving_average(df$mean_sss, n))
+
+df$ytd_sst <- moving_average_window(df$mean_sst, n)
+df$ytd_sss <- moving_average_window(df$mean_sss, n)
+
+```
+
+Compute the six day moving average of the SST and the SSSS.
+
+```{r}
+n <- 6
+all.equal(moving_average_window(df$mean_sst, n),
+  moving_average(df$mean_sst, n))
+all.equal(moving_average_window(df$mean_sss, n),
+  moving_average(df$mean_sss, n))
+
+df$six_day_sst <- moving_average_window(df$mean_sst, n)
+df$six_day_sss <- moving_average_window(df$mean_sss, n)
+```
+
+Take a look at the data frame with the new values.
+
+```{r}
+head(df)
+```
+
+Another approach for the year to date average is to make the function capable of being initialized at any day (in general this would be January 1)and then calculate the average for the year to date (or any designated time period) and then restart the year to date average (or time period to date average), after the specified time period has been reached.
+
+```{r}
+
+tp_average <- function(x, n, i_start) {
+  y <- c()
+  y[1:i_start] <- NA
+  for (i in seq(i_start,length(x),n)){
+      count <- 1
+      for (ii in i:(i+n)){
+        if (ii <= length(x)){
+          y[ii] <- sum(x[i:ii])/count
+          count <- count + 1
+        }
+      }
+  }
+  return(y)
+}
+
+# Try out basics with test data
+my_data <- c(1 ,2 ,5 ,7 ,15, 12, 7, 14, 9, 10 ) # Test vector
+start_index <- 3
+my_time_period <- 4  # Test time period
+
+tp_average(my_data, my_time_period, start_index)
+
+```
+Now, try to use window functions to accomplish the same thing. 
+
+```{r}
+tp_average_window <- function(x, n, i_start) {
+  y <- rep(NA, length(x))
+  for (i in seq(i_start,length(x),n)){
+    temp <- cumsum(lead(x, i-1))/seq(x)
+    y[i:(i+n-1)] <- temp[1:n]
+  }
+  y <- y[1:length(x)]
+  return(y)
+}
+
+tp_average_window(my_data, my_time_period, start_index)
+```
+
+Check answers with previous function.
+
+```{r}
+
+all.equal(tp_average_window(my_data, my_time_period, start_index),
+          tp_average(my_data, my_time_period, start_index))
+
+```
+Compute the year to date average of the SST and the SSS and check them.
+
+```{r}
+time_period <- 365
+start_i <- which(df$date == as.Date("10/10/21", "%m/%d/%y"))
+
+all.equal(tp_average_window(df$mean_sst, time_period, start_i),
+  tp_average(df$mean_sst, time_period, start_i))
+all.equal(tp_average_window(df$mean_sss, time_period, start_i),
+  tp_average(df$mean_sss, time_period, start_i))
+
+df$tp_sst <- tp_average_window(df$mean_sst, time_period, start_i)
+df$tp_sss <- tp_average_window(df$mean_sss, time_period ,start_i)
+```
+
+## Plotting
+
+Take a look at the SSS over time. 
+
+```{r}
+ggplot(data=df, aes(x=date)) +
+  geom_line(aes(y=mean_sst))+
+  geom_line(aes(y=six_day_sst))
+
+```
+
+Take a look at SSS over time.
+
+```{r}
+ggplot(data=df, aes(x=date)) +
+  geom_line(aes(y=mean_sss))+
+  geom_line(aes(y=six_day_sss))
+
+```
+
+## Conclusion and Extension
+
+I successfully created a start-to-date average and a six-day moving average for the Sea Surface Temperature and Sea Surface Salinity. 
+
+There are a few of ways to improve this work. 
+- The current functions assume that there is a value present for every day. If a day was skipped, the moving outputs would be incorrect. 
+- The tp_average_window function does use an R window function, but it doesn't only use window functions, it does use a for loop. Another appproach would have to be used to only use window functions to solve.
+- Currently, I only loaded in one of the csv files from the NOAA website, however there are other years and months present on the website. To extend this work all of the csv files could be pulled and concatinated.
+
+
+## Citation
+
+Sweeney, Colm; Newberger, Timothy; Sutherland, Stewart C.; Munro, David R. (2021). Surface underway measurements of partial pressure of carbon dioxide (pCO2), sea surface temperature, sea surface salinity and barometric pressure during the RV Sikuliaq Expeditions in the North Pacific Ocean, Gulf of Alaska, Bering Sea, Chukchi Sea, Beaufort Sea and Arctic Ocean from 2021-03-05 to 2021-11-23
+
+https://www.ncei.noaa.gov/metadata/geoportal/rest/metadata/item/gov.noaa.nodc%3A0246947/html
